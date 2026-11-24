@@ -50,6 +50,25 @@ Este repositorio contiene la tercera entrega integradora del caso semestral. Mat
   2. _[Pregunta 2]_
   3. _[Pregunta 3]_
 
+### 2.1 Datos de origen (`data/`)
+
+Simulación de **TechNova Retail (TNR)** sobre datos docentes de 2025. Los atributos y fuentes nuevas son sintéticos y conservan anomalías intencionales para el perfilado. Los CSV usan UTF-8 y separador `;`, y los montos están en CLP enteros. El detalle de carga y los casos verificables está en [`data/LEEME.md`](data/LEEME.md).
+
+| Archivo | Formato | Tamaño | Contenido |
+|---------|---------|-------:|-----------|
+| `ventas_db.sql` | SQL (SQLite) | 37.971 filas | Crea y carga la tabla `ventas_crudas`. |
+| `ventas_2025_tnr_ampliadas.csv` | CSV | 37.971 filas | Las mismas ventas exportadas a CSV: precio como texto (`$133.250`), canal, estado, pedido omnicanal y costo unitario. Se usa este archivo o el SQL como fuente de ventas, no ambos. |
+| `productos_tnr_ampliados.xlsx` | Excel (hoja `productos`) | 45 SKU | Catálogo con categoría, subcategoría, marca, precio de lista y costo de referencia. |
+| `clientes_crm.csv` | CSV | 2.530 filas | CRM con RUT, contacto, comuna y consentimiento; incluye fichas repetidas o ambiguas. |
+| `despachos.csv` | CSV | 60 filas | Despachos ligados a ventas por `id_pedido_omnicanal`. |
+| `notas_credito.csv` | CSV | 47 filas | Notas de crédito ligadas por `id_venta_origen`. |
+| `inventario_inicial.csv` | CSV | 10 filas | Stock físico y reservado de `CD01` por SKU. |
+| `movimientos_inventario.jsonl` | JSON Lines | 36 eventos | Movimientos de stock (ventas, reposiciones), con reenvíos y eventos tardíos. |
+| `logs_web_tnr.json` | JSON anidado | 5.000 eventos | Histórico de navegación web (`evento`, `usuario`, `contexto`). |
+| `eventos_web_stream.jsonl` | JSON Lines | 78 eventos | Eventos web en orden de llegada para simular streaming (checkout del 26-12-2025). |
+| `postventa_pagina_{1..3}.json` + `postventa_mock.py` | API REST paginada | 30 órdenes | Órdenes de servicio técnico, servidas en local por `postventa_mock.py` (`http://127.0.0.1:8766/ordenes?page=1`). |
+| `referencia/dataset_tnr_original.xlsx` | Excel | — | Dataset docente original (ventas, productos, logs y diccionario de datos), sirve para contrastar el perfilado. |
+
 ## 3. Patrón de proceso de datos implementado
 
 Se implementa un patrón **ETL por capas** (inspirado en la arquitectura *medallion*):
