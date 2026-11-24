@@ -1,0 +1,87 @@
+{
+  "pagina": 3,
+  "siguiente": null,
+  "total": 30,
+  "ordenes": [
+    {
+      "id_orden": "ST-0021",
+      "id_venta": "V002736",
+      "estado": "en_reparacion",
+      "fecha_apertura": "2025-07-27",
+      "fecha_cierre": null,
+      "en_garantia": true
+    },
+    {
+      "id_orden": "ST-0022",
+      "id_venta": "V027608",
+      "estado": "cerrada",
+      "fecha_apertura": "2025-07-15",
+      "fecha_cierre": "2025-07-23",
+      "en_garantia": true
+    },
+    {
+      "id_orden": "ST-0023",
+      "id_venta": "V026108",
+      "estado": "cerrada",
+      "fecha_apertura": "2025-07-24",
+      "fecha_cierre": "2025-08-02",
+      "en_garantia": true
+    },
+    {
+      "id_orden": "ST-0024",
+      "id_venta": "V026764",
+      "estado": "recibida",
+      "fecha_apertura": "2025-04-17",
+      "fecha_cierre": null,
+      "en_garantia": true
+    },
+    {
+      "id_orden": "ST-0025",
+      "id_venta": "V036513",
+      "estado": "en_reparacion",
+      "fecha_apertura": "2025-08-17",
+      "fecha_cierre": null,
+      "en_garantia": false
+    },
+    {
+      "id_orden": "ST-0026",
+      "id_venta": "V004894",
+      "estado": "cerrada",
+      "fecha_apertura": "2025-07-05",
+      "fecha_cierre": "2025-07-09",
+      "en_garantia": true
+    },
+    {
+      "id_orden": "ST-0027",
+      "id_venta": "V008493",
+      "estado": "cerrada",
+      "fecha_apertura": "2025-04-08",
+      "fecha_cierre": "2025-04-13",
+      "en_garantia": true
+    },
+    {
+      "id_orden": "ST-0028",
+      "id_venta": "V033769",
+      "estado": "recibida",
+      "fecha_apertura": "2025-08-28",
+      "fecha_cierre": null,
+      "en_garantia": true
+    },
+    {
+      "id_orden": "ST-0029",
+      "id_venta": "V030032",
+      "estado": "en_reparacion",
+      "fecha_apertura": "2025-06-29",
+      "fecha_cierre": null,
+      "en_garantia": true
+    },
+    {
+      "id_orden": "ST-0030",
+      "id_venta": "V008679",
+      "estado": "cerrada",
+      "fecha_apertura": "2025-10-09",
+      "fecha_cierre": "2025-10-17",
+      "en_garantia": false
+    }
+  ]
+}
