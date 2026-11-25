@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from tnr import tasks
@@ -27,6 +28,28 @@ def build_parser() -> argparse.ArgumentParser:
     pub = sub.add_parser("publish", help="Publicar marts Gold")
     pub.add_argument("dominio", choices=["comercial"])
     pub.add_argument("--corte", help="Fecha de corte YYYY-MM-DD (default TNR_CORTE)")
+    srv = sub.add_parser("serve", help="Levantar el receptor HTTP")
+    srv.add_argument("app", choices=["web"])
+    srv.add_argument("--host", default="127.0.0.1")
+    srv.add_argument("--port", type=int, default=8765)
+
+    rep = sub.add_parser("replay", help="Reenviar un JSONL al receptor (productor mínimo)")
+    rep.add_argument("app", choices=["web"])
+    rep.add_argument("--file", required=True, help="Ruta al JSONL (relativa a INPUT_DIR si no existe)")
+    rep.add_argument("--url", default=os.environ.get("TNR_WEB_URL", "http://127.0.0.1:8765/eventos"))
+    rep.add_argument("--desde", type=int, default=1, help="Primera línea (1-based)")
+    rep.add_argument("--hasta", type=int, help="Última línea incluida")
+    rep.add_argument("--delay", type=float, default=0.0, help="Segundos entre envíos")
+
+    clo = sub.add_parser("close", help="Cerrar una ventana desde Bronze")
+    clo.add_argument("app", choices=["web"])
+    clo.add_argument("--minuto", required=True, help="Inicio del minuto, ej. 2025-12-26T13:00:00-03:00")
+    clo.add_argument("--corte-ingesta", help="Corte de ingesta (default: ahora)")
+
+    ser = sub.add_parser("serving", help="Consultar Serving para un intervalo")
+    ser.add_argument("app", choices=["web"])
+    ser.add_argument("--desde", required=True)
+    ser.add_argument("--hasta", required=True)
     return p
 
 
@@ -39,6 +62,23 @@ def main(argv: list[str] | None = None) -> int:
             _print(tasks.ingest(args.fuente, input_kind=args.input_kind, force=args.force, reproceso=args.reproceso))
         elif args.cmd == "publish":
             _print(tasks.publish_comercial(args.corte))
+        elif args.cmd == "serve":
+            from tnr.apps.receptor import serve
+            serve(host=args.host, port=args.port)
+        elif args.cmd == "replay":
+            from pathlib import Path
+            from tnr.apps.productor import http_post, replay
+            from tnr.config import Config
+            path = Path(args.file)
+            if not path.exists():
+                path = Config.from_env().input_dir / args.file
+            replay(path, http_post(args.url), desde=args.desde, hasta=args.hasta, delay=args.delay,
+                   on_response=lambda n, st, b: print(f"{n:>4} {st} {b.get('estado', b.get('error'))}"
+                                                      f" {b.get('id_recepcion')}", flush=True))
+        elif args.cmd == "close":
+            _print(tasks.close_web(args.minuto, args.corte_ingesta))
+        elif args.cmd == "serving":
+            _print(tasks.serving_web(args.desde, args.hasta))
     except NotImplementedError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

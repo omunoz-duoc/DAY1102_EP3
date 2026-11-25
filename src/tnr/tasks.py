@@ -42,6 +42,9 @@ def _source(fuente: str, **opts):
     if fuente == "postventa":
         from tnr.ingest.postventa import PostventaSource
         return PostventaSource()
+    if fuente == "web_historico":
+        from tnr.ingest.web_historico import WebHistoricoSource
+        return WebHistoricoSource()
     if fuente in FUENTES:
         raise NotImplementedError(f"La ingesta '{fuente}' se implementa en una fase posterior")
     raise ValueError(f"Fuente desconocida: {fuente}")
@@ -50,6 +53,8 @@ def _source(fuente: str, **opts):
 def ingest(fuente: str, *, input_kind: str | None = None, force: bool = False, reproceso: bool = False,
            cfg: Config | None = None) -> dict[str, Any]:
     cfg = cfg or Config.from_env()
+    if fuente == "web_stream":      # carga continua: recuperar recepciones de Bronze sin confirmar
+        return recover_web(cfg)
     return run_batch(_source(fuente, input_kind=input_kind), cfg, force=force, reproceso=reproceso).to_dict()
 
 
@@ -57,3 +62,22 @@ def publish_comercial(corte: str | None = None, cfg: Config | None = None) -> di
     from tnr.gold.comercial import publish_comercial as _publish
     cfg = cfg or Config.from_env()
     return _publish(cfg, corte or cfg.corte)
+
+
+def recover_web(cfg: Config | None = None) -> dict[str, Any]:
+    from tnr.ingest.web_stream import WebStreamReceiver
+    receiver = WebStreamReceiver(cfg or Config.from_env())
+    try:
+        return receiver.recover()
+    finally:
+        receiver.close()
+
+
+def close_web(minuto: str, corte_ingesta: str | None = None, cfg: Config | None = None) -> dict[str, Any]:
+    from tnr.gold.web import close_minute
+    return close_minute(cfg or Config.from_env(), minuto, corte_ingesta)
+
+
+def serving_web(desde: str, hasta: str, cfg: Config | None = None) -> dict[str, Any]:
+    from tnr.gold.web import leer_serving
+    return leer_serving(cfg or Config.from_env(), desde, hasta)
