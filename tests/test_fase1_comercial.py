@@ -84,7 +84,7 @@ def test_productos_45_sku_y_6_categorias(comercial, q):
 
 
 def test_gold_ventas_grano_y_montos(comercial, q):
-    pub = comercial["publish"]
+    pub = comercial["publish"]["ventas"]
     assert pub["filas"] == pub["ventas"]
     confirmadas = q("SELECT COUNT(*) FROM silver_ventas WHERE estado_venta='confirmada'")[0][0]
     assert pub["filas"] == confirmadas

@@ -23,6 +23,7 @@ from tnr.config import Config
 class Acquired:
     files: dict[str, bytes]   # nombre -> contenido original
     ruta: str                 # origen legible (archivo, base, URL)
+    fingerprint: list[str] | None = None   # archivos que definen la huella (default: todos)
 
 
 class BatchSource(Protocol):
@@ -104,7 +105,8 @@ def run_batch(source: BatchSource, cfg: Config, *, force: bool = False, reproces
             sha, ruta, bronze = prev["sha256"], prev["ruta"], Path(prev["bronze_path"])
         else:
             acq = source.acquire(cfg)
-            sha, ruta = sha256_files(acq.files), acq.ruta
+            sha = sha256_files({n: acq.files[n] for n in (acq.fingerprint or acq.files)})
+            ruta = acq.ruta
             prev = _last_success(conn, fuente, sha, version)
             if prev is not None and not force:
                 conn.execute(text(
@@ -138,7 +140,6 @@ def run_batch(source: BatchSource, cfg: Config, *, force: bool = False, reproces
         result.excluidos = len(dedup.exclusions)
         result.revision = len(dedup.reviews)
         result.rechazados = len(rejections)
-        result.alertas = sum(len(s.alerts) for s in silver)
 
         # 3. Publicar Silver + control + estado del lote en una sola transacción
         with engine.begin() as conn:
@@ -146,6 +147,7 @@ def run_batch(source: BatchSource, cfg: Config, *, force: bool = False, reproces
                 "UPDATE etl_runs SET estado = 'reemplazado' WHERE fuente = :f AND sha256 = :s"
                 " AND version_esquema = :v AND estado = 'exitoso'"), {"f": fuente, "s": sha, "v": version})
             result.publicados = source.persist(conn, silver, run_id)
+            result.alertas = sum(len(s.alerts) for s in silver)   # persist puede agregar alertas
             _insert_many(conn,
                 "INSERT INTO etl_rechazos (run_id, fuente, ref_bronze, id_registro, motivo, detalle)"
                 " VALUES (:run_id, :fuente, :ref, :key, :motivo, :detalle)",
@@ -161,6 +163,9 @@ def run_batch(source: BatchSource, cfg: Config, *, force: bool = False, reproces
                 " VALUES (:run_id, :fuente, :key, :motivo, :evidencia)",
                 [{"run_id": run_id, "fuente": fuente, "key": r.key, "motivo": r.motivo,
                   "evidencia": json.dumps(r.evidencia, ensure_ascii=False, default=str)} for r in dedup.reviews])
+            # persist puede registrar revisiones propias (p. ej. resolución de identidad)
+            result.revision = conn.execute(text("SELECT COUNT(*) FROM etl_revision WHERE run_id = :r"),
+                                           {"r": run_id}).scalar_one()
             _insert_many(conn,
                 "INSERT INTO etl_alertas_calidad (run_id, fuente, ref_bronze, id_registro, campo, codigo, valor_original)"
                 " VALUES (:run_id, :fuente, :ref, :key, :campo, :codigo, :valor)",

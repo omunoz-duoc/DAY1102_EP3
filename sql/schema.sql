@@ -132,17 +132,58 @@ CREATE TABLE IF NOT EXISTS silver_notas_credito (
     run_id          TEXT NOT NULL REFERENCES etl_runs (run_id)
 );
 
--- escritor: tnr.ingest.clientes (fase 2) · RELACIÓN RESTRINGIDA
+-- escritor: tnr.ingest.clientes
+CREATE TABLE IF NOT EXISTS silver_clientes (
+    customer_id               TEXT PRIMARY KEY,
+    comuna                    TEXT,
+    canal_alta                TEXT,
+    fecha_alta                TEXT,
+    consentimiento_publicidad TEXT NOT NULL CHECK (consentimiento_publicidad IN ('si', 'no', 'sin_registro')),
+    estado_identidad          TEXT NOT NULL CHECK (estado_identidad IN ('resuelto', 'revision')),
+    n_fichas_crm              INTEGER NOT NULL,
+    run_id                    TEXT NOT NULL REFERENCES etl_runs (run_id)
+);
+
+-- escritor: tnr.ingest.clientes · mapa ESTABLE (no se borra entre corridas)
+CREATE TABLE IF NOT EXISTS ident_crm_customer (
+    id_crm         TEXT PRIMARY KEY,
+    customer_id    TEXT NOT NULL,
+    metodo_vinculo TEXT NOT NULL,       -- rut | correo_y_telefono | nuevo | revision
+    run_id         TEXT NOT NULL REFERENCES etl_runs (run_id)
+);
+
+-- escritor: tnr.ingest.clientes · RELACIÓN RESTRINGIDA
 CREATE TABLE IF NOT EXISTS ident_rut_customer (
     rut_normalizado TEXT PRIMARY KEY,
     customer_id     TEXT NOT NULL,
     run_id          TEXT NOT NULL REFERENCES etl_runs (run_id)
 );
 
+-- escritor: tnr.ingest.clientes · RELACIÓN RESTRINGIDA (contacto)
+CREATE TABLE IF NOT EXISTS ident_contacto_cliente (
+    customer_id      TEXT PRIMARY KEY REFERENCES silver_clientes (customer_id) ON DELETE CASCADE,
+    email_contacto   TEXT,
+    email_verificado INTEGER,
+    telefono         TEXT,
+    run_id           TEXT NOT NULL REFERENCES etl_runs (run_id)
+);
+
+-- escritor: tnr.ingest.postventa
+CREATE TABLE IF NOT EXISTS silver_postventa (
+    id_orden       TEXT PRIMARY KEY,
+    id_venta       TEXT NOT NULL,
+    estado         TEXT NOT NULL CHECK (estado IN ('recibida', 'en_reparacion', 'cerrada')),
+    fecha_apertura TEXT NOT NULL,
+    fecha_cierre   TEXT,
+    en_garantia    INTEGER NOT NULL CHECK (en_garantia IN (0, 1)),
+    pagina         INTEGER NOT NULL,
+    run_id         TEXT NOT NULL REFERENCES etl_runs (run_id)
+);
+
 -- ============================== GOLD ==============================
 CREATE TABLE IF NOT EXISTS gold_publicaciones (
     publish_id     TEXT PRIMARY KEY,
-    mart           TEXT NOT NULL,
+    mart           TEXT NOT NULL,       -- dominio publicado (comercial)
     fecha_corte    TEXT NOT NULL,
     version_reglas TEXT NOT NULL,
     run_ids        TEXT NOT NULL,       -- JSON {tabla_silver: [run_id, ...]}
@@ -187,4 +228,49 @@ CREATE TABLE IF NOT EXISTS gold_mart_ventas (
     monto_neto_clp         INTEGER NOT NULL,
     publish_id             TEXT NOT NULL REFERENCES gold_publicaciones (publish_id),
     PRIMARY KEY (fecha_corte, id_venta)
+);
+
+CREATE TABLE IF NOT EXISTS gold_mart_cliente_360 (
+    fecha_corte                TEXT NOT NULL,
+    customer_id                TEXT NOT NULL,
+    comuna                     TEXT,
+    canal_alta                 TEXT,
+    fecha_alta                 TEXT,
+    consentimiento_publicidad  TEXT NOT NULL,
+    estado_identidad           TEXT NOT NULL,
+    frecuencia_compras         INTEGER NOT NULL,
+    fecha_ultima_compra        TEXT,
+    recencia_dias              INTEGER,
+    monto_bruto_clp            INTEGER NOT NULL,
+    monto_neto_clp             INTEGER NOT NULL,
+    canal_preferido            TEXT,
+    n_ordenes_postventa        INTEGER NOT NULL,
+    n_ordenes_abiertas         INTEGER NOT NULL,
+    n_ordenes_garantia         INTEGER NOT NULL,
+    dias_resolucion_promedio   REAL,
+    publish_id                 TEXT NOT NULL REFERENCES gold_publicaciones (publish_id),
+    PRIMARY KEY (fecha_corte, customer_id)
+);
+
+CREATE TABLE IF NOT EXISTS gold_mart_conciliacion_ventas (
+    fecha_corte  TEXT NOT NULL,
+    publish_id   TEXT NOT NULL REFERENCES gold_publicaciones (publish_id),
+    escenario    TEXT NOT NULL,          -- ampliado | referencia_docente
+    orden        INTEGER NOT NULL,
+    etapa        TEXT NOT NULL,
+    run_id       TEXT,
+    filas        INTEGER,
+    monto_clp    INTEGER,
+    descripcion  TEXT,
+    PRIMARY KEY (publish_id, escenario, orden)
+);
+
+-- Auditoría de referencias sin contraparte detectadas en la integración
+CREATE TABLE IF NOT EXISTS ctl_referencias_pendientes (
+    fecha_corte TEXT NOT NULL,
+    publish_id  TEXT NOT NULL,
+    tipo        TEXT NOT NULL,           -- despacho_sin_venta | postventa_sin_venta | venta_rut_sin_cliente | ...
+    id_registro TEXT NOT NULL,
+    referencia  TEXT,
+    PRIMARY KEY (fecha_corte, tipo, id_registro)
 );

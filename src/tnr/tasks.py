@@ -30,6 +30,18 @@ def _source(fuente: str, **opts):
     if fuente == "productos":
         from tnr.ingest.productos import ProductosSource
         return ProductosSource()
+    if fuente == "clientes":
+        from tnr.ingest.clientes import ClientesSource
+        return ClientesSource()
+    if fuente == "despachos":
+        from tnr.ingest.despachos import DespachosSource
+        return DespachosSource()
+    if fuente == "notas_credito":
+        from tnr.ingest.notas_credito import NotasCreditoSource
+        return NotasCreditoSource()
+    if fuente == "postventa":
+        from tnr.ingest.postventa import PostventaSource
+        return PostventaSource()
     if fuente in FUENTES:
         raise NotImplementedError(f"La ingesta '{fuente}' se implementa en una fase posterior")
     raise ValueError(f"Fuente desconocida: {fuente}")
