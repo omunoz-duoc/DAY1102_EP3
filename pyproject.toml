@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tnr"
+version = "0.1.0"
+description = "TechNova Retail 360 - pipelines Bronze/Silver/Gold (EP5 DAY1102)"
+requires-python = ">=3.10"
+dependencies = [
+  "pandas>=2.2",
+  "openpyxl>=3.1",
+  "sqlalchemy>=2.0",
+  "pyarrow>=15",
+  "flask>=3.0",
+  "requests>=2.31",
+  "dash>=2.17",
+  "tzdata",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+tnr = "tnr.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:dash"

@@ -1,0 +1,190 @@
+-- TechNova Retail 360 · warehouse.sqlite
+-- Control, Silver y Gold. Cada relación Silver tiene un único módulo escritor (indicado en el comentario).
+
+-- ============================== CONTROL ==============================
+CREATE TABLE IF NOT EXISTS etl_runs (
+    run_id          TEXT PRIMARY KEY,
+    fuente          TEXT NOT NULL,
+    ruta            TEXT,
+    sha256          TEXT,
+    version_esquema TEXT NOT NULL,
+    modo            TEXT NOT NULL DEFAULT 'normal' CHECK (modo IN ('normal', 'forzado', 'reproceso')),
+    ts_ingesta      TEXT NOT NULL,              -- UTC ISO
+    ts_fin          TEXT,
+    estado          TEXT NOT NULL CHECK (estado IN ('en_proceso', 'exitoso', 'fallido', 'omitido', 'reemplazado')),
+    n_recibidos     INTEGER,
+    n_excluidos     INTEGER,
+    n_revision      INTEGER,
+    n_rechazados    INTEGER,
+    n_publicados    INTEGER,
+    n_alertas       INTEGER,
+    bronze_path     TEXT,
+    parquet_path    TEXT,
+    detalle         TEXT
+);
+-- Un run exitoso por fuente + huella + versión de esquema
+CREATE UNIQUE INDEX IF NOT EXISTS ux_runs_exitoso
+    ON etl_runs (fuente, sha256, version_esquema) WHERE estado = 'exitoso';
+
+CREATE TABLE IF NOT EXISTS etl_rechazos (
+    id_rechazo  INTEGER PRIMARY KEY,
+    run_id      TEXT NOT NULL REFERENCES etl_runs (run_id),
+    fuente      TEXT NOT NULL,
+    ref_bronze  TEXT NOT NULL,
+    id_registro TEXT,
+    motivo      TEXT NOT NULL,
+    detalle     TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_rechazos_run ON etl_rechazos (run_id);
+
+CREATE TABLE IF NOT EXISTS etl_exclusiones (
+    id_exclusion   INTEGER PRIMARY KEY,
+    run_id         TEXT NOT NULL REFERENCES etl_runs (run_id),
+    fuente         TEXT NOT NULL,
+    ref_bronze     TEXT NOT NULL,
+    id_registro    TEXT NOT NULL,
+    motivo         TEXT NOT NULL,
+    ref_conservada TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_exclusiones_run ON etl_exclusiones (run_id);
+
+CREATE TABLE IF NOT EXISTS etl_revision (
+    id_revision INTEGER PRIMARY KEY,
+    run_id      TEXT NOT NULL REFERENCES etl_runs (run_id),
+    fuente      TEXT NOT NULL,
+    id_registro TEXT NOT NULL,
+    motivo      TEXT NOT NULL,
+    evidencia   TEXT,
+    estado      TEXT NOT NULL DEFAULT 'pendiente'
+);
+
+CREATE TABLE IF NOT EXISTS etl_alertas_calidad (
+    id_alerta      INTEGER PRIMARY KEY,
+    run_id         TEXT NOT NULL REFERENCES etl_runs (run_id),
+    fuente         TEXT NOT NULL,
+    ref_bronze     TEXT NOT NULL,
+    id_registro    TEXT,
+    campo          TEXT NOT NULL,
+    codigo         TEXT NOT NULL,
+    valor_original TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_alertas_run ON etl_alertas_calidad (run_id);
+
+-- ============================== SILVER ==============================
+-- escritor: tnr.ingest.ventas
+CREATE TABLE IF NOT EXISTS silver_ventas (
+    id_venta               TEXT PRIMARY KEY,
+    fecha                  TEXT NOT NULL,       -- ISO YYYY-MM-DD
+    cantidad               INTEGER NOT NULL CHECK (cantidad > 0),
+    precio_unitario_clp    INTEGER NOT NULL CHECK (precio_unitario_clp > 0),
+    costo_unitario_clp     INTEGER,
+    canal                  TEXT NOT NULL,
+    estado_venta           TEXT NOT NULL CHECK (estado_venta IN ('confirmada', 'pendiente', 'cancelada')),
+    id_producto            TEXT NOT NULL,
+    id_tienda              TEXT,
+    ciudad_tienda          TEXT,
+    id_pedido_omnicanal    TEXT,
+    modalidad_entrega      TEXT,
+    id_ubicacion_despacho  TEXT,
+    observaciones          TEXT,
+    estado_vinculo_cliente TEXT NOT NULL CHECK (estado_vinculo_cliente IN ('rut_disponible', 'pendiente')),
+    fila_origen            INTEGER NOT NULL,
+    run_id                 TEXT NOT NULL REFERENCES etl_runs (run_id)
+);
+CREATE INDEX IF NOT EXISTS ix_ventas_pedido ON silver_ventas (id_pedido_omnicanal);
+
+-- escritor: tnr.ingest.ventas · RELACIÓN RESTRINGIDA (no se exporta a Parquet ni a marts)
+CREATE TABLE IF NOT EXISTS silver_ventas_identidad (
+    id_venta        TEXT PRIMARY KEY REFERENCES silver_ventas (id_venta) ON DELETE CASCADE,
+    rut_normalizado TEXT NOT NULL,
+    run_id          TEXT NOT NULL REFERENCES etl_runs (run_id)
+);
+CREATE INDEX IF NOT EXISTS ix_ventas_identidad_rut ON silver_ventas_identidad (rut_normalizado);
+
+-- escritor: tnr.ingest.productos
+CREATE TABLE IF NOT EXISTS silver_productos (
+    id_producto          TEXT PRIMARY KEY,
+    nombre_producto      TEXT,
+    categoria            TEXT,
+    subcategoria         TEXT,
+    marca                TEXT,
+    precio_lista_clp     INTEGER,
+    costo_referencia_clp INTEGER CHECK (costo_referencia_clp IS NULL OR costo_referencia_clp >= 0),
+    run_id               TEXT NOT NULL REFERENCES etl_runs (run_id)
+);
+
+-- escritor: tnr.ingest.despachos (fase 2)
+CREATE TABLE IF NOT EXISTS silver_despachos (
+    id_despacho           TEXT PRIMARY KEY,
+    id_pedido_omnicanal   TEXT NOT NULL,
+    id_ubicacion_despacho TEXT NOT NULL,
+    fecha_despacho        TEXT NOT NULL,
+    run_id                TEXT NOT NULL REFERENCES etl_runs (run_id)
+);
+CREATE INDEX IF NOT EXISTS ix_despachos_pedido ON silver_despachos (id_pedido_omnicanal);
+
+-- escritor: tnr.ingest.notas_credito (fase 2)
+CREATE TABLE IF NOT EXISTS silver_notas_credito (
+    id_nota         TEXT PRIMARY KEY,
+    id_venta_origen TEXT NOT NULL,
+    fecha_emision   TEXT NOT NULL,
+    monto_clp       INTEGER NOT NULL CHECK (monto_clp > 0),
+    run_id          TEXT NOT NULL REFERENCES etl_runs (run_id)
+);
+
+-- escritor: tnr.ingest.clientes (fase 2) · RELACIÓN RESTRINGIDA
+CREATE TABLE IF NOT EXISTS ident_rut_customer (
+    rut_normalizado TEXT PRIMARY KEY,
+    customer_id     TEXT NOT NULL,
+    run_id          TEXT NOT NULL REFERENCES etl_runs (run_id)
+);
+
+-- ============================== GOLD ==============================
+CREATE TABLE IF NOT EXISTS gold_publicaciones (
+    publish_id     TEXT PRIMARY KEY,
+    mart           TEXT NOT NULL,
+    fecha_corte    TEXT NOT NULL,
+    version_reglas TEXT NOT NULL,
+    run_ids        TEXT NOT NULL,       -- JSON {tabla_silver: [run_id, ...]}
+    ts_publicacion TEXT NOT NULL,
+    n_filas        INTEGER NOT NULL,
+    parquet_path   TEXT,
+    detalle        TEXT
+);
+
+-- Estado de cada nota de crédito evaluada en la publicación comercial
+CREATE TABLE IF NOT EXISTS ctl_notas_evaluacion (
+    fecha_corte     TEXT NOT NULL,
+    id_nota         TEXT NOT NULL,
+    id_venta_origen TEXT NOT NULL,
+    fecha_emision   TEXT NOT NULL,
+    monto_clp       INTEGER NOT NULL,
+    estado          TEXT NOT NULL,      -- aplicada | huerfana | rechazada_* | pendiente_*
+    publish_id      TEXT NOT NULL,
+    PRIMARY KEY (fecha_corte, id_nota)
+);
+
+CREATE TABLE IF NOT EXISTS gold_mart_ventas (
+    fecha_corte            TEXT NOT NULL,
+    id_venta               TEXT NOT NULL,
+    fecha                  TEXT NOT NULL,      -- reconocimiento = fecha de venta (PoC)
+    customer_id            TEXT,               -- NULL = venta sin cliente vinculado
+    id_producto            TEXT NOT NULL,
+    categoria              TEXT,
+    subcategoria           TEXT,
+    canal                  TEXT NOT NULL,
+    modalidad_entrega      TEXT,
+    id_tienda              TEXT,
+    id_ubicacion_venta     TEXT,
+    id_ubicacion_operativa TEXT,               -- primer despacho por fecha e ID, o la de la venta
+    n_despachos            INTEGER NOT NULL,
+    cantidad               INTEGER NOT NULL,
+    precio_unitario_clp    INTEGER NOT NULL,
+    costo_unitario_clp     INTEGER,
+    monto_bruto_clp        INTEGER NOT NULL,
+    n_notas                INTEGER NOT NULL,
+    monto_notas_clp        INTEGER NOT NULL,
+    monto_neto_clp         INTEGER NOT NULL,
+    publish_id             TEXT NOT NULL REFERENCES gold_publicaciones (publish_id),
+    PRIMARY KEY (fecha_corte, id_venta)
+);
