@@ -70,6 +70,19 @@ CREATE TABLE IF NOT EXISTS etl_alertas_calidad (
 );
 CREATE INDEX IF NOT EXISTS ix_alertas_run ON etl_alertas_calidad (run_id);
 
+-- Confirmación de cada recepción continua procesada hacia Silver (punto de reproceso)
+CREATE TABLE IF NOT EXISTS stream_recepciones (
+    id_recepcion TEXT PRIMARY KEY,
+    fuente       TEXT NOT NULL,
+    archivo      TEXT NOT NULL,
+    ts_ingesta   TEXT NOT NULL,
+    id_evento    TEXT,
+    estado       TEXT NOT NULL CHECK (estado IN ('insertada', 'duplicada', 'revision', 'rechazada')),
+    detalle      TEXT,
+    run_id       TEXT NOT NULL REFERENCES etl_runs (run_id)
+);
+CREATE INDEX IF NOT EXISTS ix_stream_recepciones_fuente ON stream_recepciones (fuente, estado);
+
 -- ============================== SILVER ==============================
 -- escritor: tnr.ingest.ventas
 CREATE TABLE IF NOT EXISTS silver_ventas (

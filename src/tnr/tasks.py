@@ -42,6 +42,9 @@ def _source(fuente: str, **opts):
     if fuente == "postventa":
         from tnr.ingest.postventa import PostventaSource
         return PostventaSource()
+    if fuente == "inventario":
+        from tnr.ingest.inventario import InventarioSource
+        return InventarioSource()
     if fuente == "web_historico":
         from tnr.ingest.web_historico import WebHistoricoSource
         return WebHistoricoSource()
@@ -51,10 +54,12 @@ def _source(fuente: str, **opts):
 
 
 def ingest(fuente: str, *, input_kind: str | None = None, force: bool = False, reproceso: bool = False,
-           cfg: Config | None = None) -> dict[str, Any]:
+           file: str | None = None, cfg: Config | None = None) -> dict[str, Any]:
     cfg = cfg or Config.from_env()
     if fuente == "web_stream":      # carga continua: recuperar recepciones de Bronze sin confirmar
         return recover_web(cfg)
+    if fuente == "movimientos_inventario":   # recuperar pendientes y consumir el archivo completo
+        return consume_movimientos(file or "movimientos_inventario.jsonl", cfg=cfg, recuperar=True)
     return run_batch(_source(fuente, input_kind=input_kind), cfg, force=force, reproceso=reproceso).to_dict()
 
 
@@ -81,3 +86,35 @@ def close_web(minuto: str, corte_ingesta: str | None = None, cfg: Config | None 
 def serving_web(desde: str, hasta: str, cfg: Config | None = None) -> dict[str, Any]:
     from tnr.gold.web import leer_serving
     return leer_serving(cfg or Config.from_env(), desde, hasta)
+
+
+def _resolve_input(path: str, cfg: Config) -> Path:
+    p = Path(path)
+    return p if p.exists() else cfg.input_dir / path
+
+
+def consume_movimientos(file: str, *, desde: int = 1, hasta: int | None = None, recuperar: bool = False,
+                        cfg: Config | None = None) -> dict[str, Any]:
+    from tnr.ingest.movimientos_inventario import MovimientosConsumer
+    cfg = cfg or Config.from_env()
+    consumer = MovimientosConsumer(cfg)
+    try:
+        recuperadas = consumer.recover() if recuperar else None
+        res = consumer.consume_file(_resolve_input(file, cfg), desde=desde, hasta=hasta)
+    finally:
+        consumer.close()
+    estados: dict[str, int] = {}
+    for r in res:
+        estados[r["estado"]] = estados.get(r["estado"], 0) + 1
+    return {"run_id": consumer.run_id, "recepciones": len(res), "estados": estados, "recuperacion": recuperadas,
+            "detalle": res}
+
+
+def close_stock(corte: str, corte_ingesta: str | None = None, cfg: Config | None = None) -> dict[str, Any]:
+    from tnr.gold.stock import close_stock as _close
+    return _close(cfg or Config.from_env(), corte, corte_ingesta)
+
+
+def stock_provisional(corte: str, cfg: Config | None = None) -> dict[str, Any]:
+    from tnr.gold.stock import stock_provisional as _prov
+    return _prov(cfg or Config.from_env(), corte)

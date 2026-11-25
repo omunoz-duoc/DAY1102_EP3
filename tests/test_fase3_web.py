@@ -70,7 +70,7 @@ def test_provisional_25_por_ciento_tras_reenvio(web):
     assert res[-1]["estado"] == "duplicada"
     assert tasa(cfg) == (5, 20, {"provisional"})
     # cada recepción queda en Bronze aunque el hecho no se duplique en Silver
-    assert query(cfg, "SELECT COUNT(*) FROM web_recepciones")[0][0] == LINEA_REENVIO_SIM001
+    assert query(cfg, "SELECT COUNT(*) FROM stream_recepciones")[0][0] == LINEA_REENVIO_SIM001
     assert query(cfg, "SELECT COUNT(*) FROM silver_eventos_web WHERE id_evento='SIM-001-R'")[0][0] == 1
     lineas = sum(1 for p in Path(cfg.bronze_dir).rglob("recepciones_*.jsonl") for _ in p.open())
     assert lineas == LINEA_REENVIO_SIM001
@@ -122,7 +122,7 @@ def test_payload_incompatible_va_a_revision_y_invalido_se_rechaza(web):
     assert post(json.dumps(sin_sesion).encode())[1]["estado"] == "rechazada"
     st, body = post(b"{no es json")
     assert st == 400 and body["id_recepcion"]
-    assert query(cfg, "SELECT COUNT(*) FROM web_recepciones WHERE estado='rechazada'")[0][0] == 3
+    assert query(cfg, "SELECT COUNT(*) FROM stream_recepciones WHERE estado='rechazada'")[0][0] == 3
 
 
 def test_recuperacion_desde_bronze_es_idempotente(web, monkeypatch):

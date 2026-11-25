@@ -35,3 +35,23 @@ def run_script(engine: Engine, sql_text: str) -> None:
         raw.commit()
     finally:
         raw.close()
+
+
+_READ_ENGINES: dict[str, Engine] = {}
+
+
+def get_read_engine(path: Path) -> Engine:
+    """Conexiones de solo lectura para la UI: aísla la visualización de las escrituras."""
+    key = str(Path(path).resolve())
+    if key not in _READ_ENGINES:
+        engine = create_engine(f"sqlite:///file:{key}?mode=ro&uri=true",
+                               connect_args={"timeout": BUSY_TIMEOUT_MS / 1000, "uri": True})
+
+        def _ro_pragmas(dbapi_conn, _record):
+            cur = dbapi_conn.cursor()
+            cur.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+            cur.execute("PRAGMA query_only=ON")
+            cur.close()
+        event.listen(engine, "connect", _ro_pragmas)
+        _READ_ENGINES[key] = engine
+    return _READ_ENGINES[key]

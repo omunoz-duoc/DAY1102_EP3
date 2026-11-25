@@ -30,17 +30,6 @@ CREATE TABLE IF NOT EXISTS silver_eventos_web_identidad (
     rut_normalizado TEXT NOT NULL
 );
 
--- Confirmación de cada recepción HTTP procesada hacia Silver (punto de reproceso)
-CREATE TABLE IF NOT EXISTS web_recepciones (
-    id_recepcion TEXT PRIMARY KEY,
-    archivo      TEXT NOT NULL,
-    ts_ingesta   TEXT NOT NULL,
-    id_evento    TEXT,
-    estado       TEXT NOT NULL CHECK (estado IN ('insertada', 'duplicada', 'revision', 'rechazada')),
-    detalle      TEXT,
-    run_id       TEXT NOT NULL REFERENCES etl_runs (run_id)
-);
-
 -- Incidencias de zona horaria (horas ambiguas o inexistentes resueltas)
 CREATE TABLE IF NOT EXISTS etl_incidencias_tz (
     id_evento   TEXT NOT NULL,

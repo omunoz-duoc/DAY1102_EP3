@@ -17,7 +17,7 @@ SELECT w.*, r.ruta, r.n_recibidos AS recepciones_leidas
 FROM ctl_ventanas_web w JOIN etl_runs r USING (run_id);
 
 -- 4. Recepciones por estado (cada reenvío queda en Bronze, no se duplica en Silver)
-SELECT estado, COUNT(*) FROM web_recepciones GROUP BY estado;
+SELECT estado, COUNT(*) FROM stream_recepciones GROUP BY estado;
 
 -- 5. Cruce de eventos purchase con ventas (puede quedar pendiente)
 SELECT estado_cruce, COUNT(*) FROM vw_purchase_web_venta GROUP BY estado_cruce;

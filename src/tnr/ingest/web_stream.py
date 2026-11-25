@@ -2,18 +2,11 @@
 
 * Cada recepción se escribe en Bronze ANTES de responder, con id_recepcion propio.
 * Un único escritor por archivo activo: cada instancia del receptor tiene su archivo y un lock.
-* web_recepciones confirma qué recepciones llegaron a Silver; `recover()` procesa las no confirmadas.
+* stream_recepciones confirma qué recepciones llegaron a Silver; `recover()` procesa las no confirmadas.
 """
 from __future__ import annotations
 
-import hashlib
 import json
-import os
-import threading
-import time
-import uuid
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Iterator
 
 from sqlalchemy import Connection, text
@@ -22,6 +15,8 @@ from tnr.common.batch import new_run_id
 from tnr.common.contracts import Rejection
 from tnr.common.db import get_engine
 from tnr.common.eventos_web import insert_eventos, minuto_utc, normalize_evento
+from tnr.common.stream import BronzeAppender, Recepcion
+from tnr.common.stream import iter_recepciones as _iter
 from tnr.common.tipos import utc_now_iso
 from tnr.config import Config
 
@@ -29,67 +24,24 @@ FUENTE = "web_stream"
 VERSION = "eventos_web.v1"
 
 
-@dataclass
-class Recepcion:
-    id_recepcion: str
-    ts_ingesta: str
-    body: str
-    archivo: str
-
-
-def bronze_root(cfg: Config) -> Path:
-    return cfg.bronze_dir / FUENTE
-
-
 def iter_recepciones(cfg: Config, corte_ingesta: str | None = None) -> Iterator[Recepcion]:
-    """Lee todas las recepciones archivadas, en orden de ingesta."""
-    rows = []
-    for path in sorted(bronze_root(cfg).glob("*/recepciones_*.jsonl")):
-        with path.open(encoding="utf-8") as fh:
-            for line in fh:
-                if not line.strip():
-                    continue
-                r = json.loads(line)
-                if corte_ingesta and r["ts_ingesta"] > corte_ingesta:
-                    continue
-                rows.append(Recepcion(r["id_recepcion"], r["ts_ingesta"], r["body"],
-                                      str(path.relative_to(cfg.bronze_dir))))
-    rows.sort(key=lambda r: (r.ts_ingesta, r.id_recepcion))
-    return iter(rows)
+    return _iter(cfg, FUENTE, corte_ingesta)
 
 
 class WebStreamReceiver:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.engine = get_engine(cfg.warehouse_path)
-        self.instancia = f"{os.getpid()}-{uuid.uuid4().hex[:6]}"
         self.run_id = new_run_id(FUENTE)
-        self._lock = threading.Lock()
-        self._seq = 0
+        self.bronze = BronzeAppender(cfg, FUENTE)
+        self.archivo = self.bronze.archivo
+        self._lock = self.bronze.lock
         ts = utc_now_iso()
-        day_dir = bronze_root(cfg) / ts[:10]
-        day_dir.mkdir(parents=True, exist_ok=True)
-        self.archivo = day_dir / f"recepciones_{self.instancia}.jsonl"
         with self.engine.begin() as conn:
             conn.execute(text(
                 "INSERT INTO etl_runs (run_id, fuente, ruta, version_esquema, modo, ts_ingesta, estado, bronze_path)"
                 " VALUES (:r, :f, 'POST /eventos', :v, 'normal', :t, 'en_proceso', :b)"),
                 {"r": self.run_id, "f": FUENTE, "v": VERSION, "t": ts, "b": str(self.archivo)})
-
-    # ------------------------------------------------------------------ Bronze
-    def _append_bronze(self, body: str) -> Recepcion:
-        self._seq += 1
-        rec = Recepcion(id_recepcion=f"R{time.time_ns()}-{self.instancia}-{self._seq:06d}",
-                        ts_ingesta=utc_now_iso(), body=body,
-                        archivo=str(self.archivo.relative_to(self.cfg.bronze_dir)))
-        line = json.dumps({"id_recepcion": rec.id_recepcion, "ts_ingesta": rec.ts_ingesta,
-                           "body_sha256": hashlib.sha256(body.encode()).hexdigest(), "body": body},
-                          ensure_ascii=False)
-        with self.archivo.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        return rec
 
     # ------------------------------------------------------------------ Silver
     def _process(self, conn: Connection, rec: Recepcion) -> dict:
@@ -127,10 +79,10 @@ class WebStreamReceiver:
                                   " codigo, valor_original) VALUES (:r, :f, :ref, :k, :c, :co, :v)"),
                              {"r": self.run_id, "f": FUENTE, "ref": ref, "k": out.key, "c": a.campo, "co": a.codigo,
                               "v": None if a.valor_original is None else str(a.valor_original)})
-        conn.execute(text("INSERT INTO web_recepciones (id_recepcion, archivo, ts_ingesta, id_evento, estado, detalle,"
-                          " run_id) VALUES (:id, :a, :t, :e, :s, :d, :r)"),
-                     {"id": rec.id_recepcion, "a": rec.archivo, "t": rec.ts_ingesta, "e": out.key, "s": estado,
-                      "d": detalle, "r": self.run_id})
+        conn.execute(text("INSERT INTO stream_recepciones (id_recepcion, fuente, archivo, ts_ingesta, id_evento, estado,"
+                          " detalle, run_id) VALUES (:id, :f, :a, :t, :e, :s, :d, :r)"),
+                     {"id": rec.id_recepcion, "f": FUENTE, "a": rec.archivo, "t": rec.ts_ingesta, "e": out.key,
+                      "s": estado, "d": detalle, "r": self.run_id})
         return {"id_recepcion": rec.id_recepcion, "ts_ingesta": rec.ts_ingesta, "id_evento": out.key,
                 "estado": estado, "detalle": detalle}
 
@@ -144,7 +96,7 @@ class WebStreamReceiver:
     def receive(self, body: bytes | str) -> dict:
         body_text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
         with self._lock:                                   # escritor único del archivo activo
-            rec = self._append_bronze(body_text)
+            rec = self.bronze.append(body_text)
             try:
                 with self.engine.begin() as conn:
                     return self._process(conn, rec)
@@ -155,7 +107,7 @@ class WebStreamReceiver:
     def recover(self) -> dict:
         """Carga idempotente de recepciones archivadas sin confirmación en Silver."""
         with self.engine.connect() as conn:
-            confirmadas = {r[0] for r in conn.execute(text("SELECT id_recepcion FROM web_recepciones"))}
+            confirmadas = {r[0] for r in conn.execute(text("SELECT id_recepcion FROM stream_recepciones WHERE fuente = :f"), {"f": FUENTE})}
         estados: dict[str, int] = {}
         with self._lock:
             for rec in iter_recepciones(self.cfg):
@@ -168,7 +120,7 @@ class WebStreamReceiver:
 
     def close(self) -> None:
         with self.engine.begin() as conn:
-            n = dict(conn.execute(text("SELECT estado, COUNT(*) FROM web_recepciones WHERE run_id = :r GROUP BY estado"),
+            n = dict(conn.execute(text("SELECT estado, COUNT(*) FROM stream_recepciones WHERE run_id = :r GROUP BY estado"),
                                   {"r": self.run_id}).all())
             conn.execute(text(
                 "UPDATE etl_runs SET estado = 'exitoso', ts_fin = :t, n_recibidos = :rec, n_excluidos = :dup,"
